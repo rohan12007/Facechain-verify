@@ -1,2 +1,23 @@
-.env
+# Python
 venv/
+__pycache__/
+*.py[cod]
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+**/node_modules/
+
+# Hardhat
+blockchain/cache/
+blockchain/artifacts/
+
+# Logs
+*.log
+
+# OS
+.DS_Store*.pyc
