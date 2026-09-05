@@ -1,0 +1,9 @@
+deepface>=0.0.93
+opencv-python-headless>=4.9.0
+numpy>=1.26,<2.0
+google-cloud-vision>=3.7.0
+python-dotenv>=1.0.0
+web3>=6.15.0,<7.0.0
+requests>=2.31.0
+Pillow>=10.0.0
+pytest>=8.0.0
