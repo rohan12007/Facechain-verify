@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from pipeline import run  # noqa: E402
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Face scan -> social search -> blockchain verification pipeline"
@@ -35,6 +36,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print(json.dumps(
-        run(args.image, args.mode, args.network),
+        run(
+            args.image,
+            args.mode,
+            args.network
+        ),
         indent=2
     ))
