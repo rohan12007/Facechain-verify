@@ -1,194 +1,732 @@
 # Face Scan → Social Match → Blockchain Verification
 
-An end-to-end pipeline: take a face photo → find a matching public social
-media post via reverse image search → hash the result and write it to a
-blockchain so it can be independently re-verified later.
+An end-to-end proof-of-concept pipeline for the Hacker House Goa 2026 Task 3:
 
+**Face scan input → face detection/embedding → face-focused reverse image search → public social-media result → blockchain fingerprint → on-chain verification**
+
+The project demonstrates a genuine search step rather than using a hardcoded or manually supplied social-media URL.
+
+---
+
+## What this project does
+
+Given a test face image, the pipeline:
+
+1. Detects and encodes the face using **DeepFace / FaceNet512**.
+2. Detects the face again and creates a **face-focused crop** for reverse-image search.
+3. Opens **Google Lens** in a visible browser and lets the operator upload the generated face crop.
+4. Extracts social-media URLs discovered by the live Lens results.
+5. Selects a discovered social-media result dynamically.
+6. Generates a SHA-256 fingerprint from the input image and matched URL.
+7. Stores the fingerprint and matched URL in a local **Hardhat / ProofRegistry** blockchain.
+8. Reads the record back from the blockchain and independently verifies the fingerprint.
+9. Prints `VERIFIED: True` when the on-chain fingerprint matches.
+
+### Pipeline
+
+```text
+                    ┌─────────────────────┐
+                    │   Input face image  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ DeepFace face       │
+                    │ detection + 512-d   │
+                    │ embedding           │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Face-focused crop   │
+                    │ face_lens_crop.jpg  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Google Lens         │
+                    │ reverse-image search│
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Social-media result │
+                    │ discovered live     │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ SHA-256 fingerprint │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ ProofRegistry       │
+                    │ local blockchain    │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Re-verify on-chain  │
+                    │ VERIFIED: True      │
+                    └─────────────────────┘
 ```
- face photo  ──▶  face detection    ──▶  reverse image      ──▶  hash the
- (selfie/scan)     + embedding           search (find a           match +
-                    (DeepFace)            public social post)      upload to
-                                                                     chain
-                                                                        │
-                                                              ┌─────────┘
-                                                              ▼
-                                                   re-fetch record on-chain
-                                                   and confirm hashes match
+
+---
+
+## Important usage boundary
+
+This proof of concept should be used only with **your own image/public posts** or with a teammate/volunteer who has explicitly agreed to the test.
+
+The reverse-image search is a genuine general-purpose search. The repository does **not** hardcode a particular social-media result or provide a database of unknown people.
+
+The system is a technical demonstration, not an identity/forensic system.
+
+---
+
+## Project structure
+
+```text
+Facechain-verify/
+│
+├── main.py
+├── requirements.txt
+├── .env.example
+├── README.md
+│
+├── src/
+│   ├── face_module.py
+│   ├── social_search.py
+│   ├── blockchain_verify.py
+│   └── pipeline.py
+│
+├── tests/
+│   ├── sample_data/
+│   │   └── instagram_test.jpeg
+│   └── ...
+│
+└── blockchain/
+    ├── contracts/
+    │   └── ProofRegistry.sol
+    ├── scripts/
+    │   └── deploy.js
+    ├── hardhat.config.js
+    └── package.json
 ```
 
-## What this is (and isn't)
+---
 
-This was built for a "genuine search, not hardcoded" pipeline assignment.
-To keep it ethical, the design assumption throughout is: **you run this on
-your own face and your own existing public posts** (or a teammate's, with
-their explicit sign-off), not on photos of strangers. The reverse-image
-step is a real, general-purpose search (Google's Web Detection API) — it's
-just pointed only at consenting test subjects. See **Ethics & limitations**
-below for why that boundary matters and isn't just a formality.
+## Technology stack
+
+### AI / Computer Vision
+
+- Python 3.11
+- DeepFace
+- FaceNet512
+- OpenCV
+- TensorFlow / tf-keras
+
+### Reverse image search
+
+- Google Lens
+- Playwright
+- Chromium
+
+Google Lens is used through a **visible browser**. The operator uploads the generated face-focused crop manually and completes any Google verification normally.
+
+### Blockchain
+
+- Solidity
+- Hardhat
+- Web3.py
+- Local EVM blockchain
+- `ProofRegistry.sol`
+
+### Hashing
+
+- SHA-256
+
+---
 
 ## Pipeline stages
 
-1. **Face detection + encoding** (`src/face_module.py`) — [DeepFace](https://github.com/serengil/deepface)
-   detects the face and produces a 512-d embedding (Facenet512 model,
-   RetinaFace detector). Also exposes a cosine-distance comparator in case
-   you want to double-check the search result actually contains the same
-   face (see "Ideas to extend" below).
-2. **Reverse image / social search** (`src/social_search.py`) — calls
-   Google Cloud Vision's [Web Detection](https://cloud.google.com/vision/docs/detecting-web)
-   feature, which returns pages and images across the web that match or
-   closely resemble the input photo. Results are filtered down to known
-   social domains (Instagram, X/Twitter, Facebook, LinkedIn, Reddit,
-   TikTok, Threads).
-3. **Blockchain upload + verification** (`src/blockchain_verify.py`) —
-   SHA-256-hashes the image bytes + matched URL into a single fingerprint,
-   writes it on-chain, then reads it back and compares. Two modes:
-   - `--mode contract` (default): calls `submitProof()` on the
-     `ProofRegistry` smart contract (`blockchain/contracts/ProofRegistry.sol`),
-     which stores the fingerprint, URL, timestamp, and submitter address as
-     a queryable record + emits an event.
-   - `--mode tx`: no contract needed — the fingerprint is written directly
-     into a self-send transaction's `data` field. Faster to set up if
-     you're short on time.
+### 1. Face detection and embedding
 
-## Which blockchain
+`src/face_module.py`
 
-Any EVM-compatible chain works with this code unchanged — just point the
-RPC URL at it. Two networks are pre-wired:
+DeepFace detects the face and generates a 512-dimensional FaceNet512 embedding.
 
-- **Local Hardhat network** (default, `--network local`) — a fully
-  simulated chain running on your own machine via `npx hardhat node`. No
-  faucet, no real funds, no flaky public RPC — the most reliable option for
-  a demo/recording. This is the recommended path if you're tight on time.
-- **Ethereum Sepolia testnet** (`--network sepolia`) — a real public
-  testnet, useful if you want the recording to show a transaction on a
-  real block explorer (sepolia.etherscan.io). Needs a free RPC URL
-  (Infura/Alchemy) and free test ETH from a Sepolia faucet.
-- Polygon's **Amoy** testnet is also wired up (`--network amoy`) as a
-  lower-fee alternative to Sepolia (Polygon's older Mumbai testnet was
-  deprecated in 2024 — Amoy is its replacement).
+Example output:
 
-## Setup
+```text
+[1/4] Detecting face in tests/sample_data/instagram_test.jpeg ...
+      -> got a 512-dim face embedding
+```
 
-Requires **Python 3.10+** and **Node.js 18+** (for the Hardhat/contract
-side, only needed if you use `--mode contract`).
+The embedding is useful for representing the detected face numerically.
+
+---
+
+### 2. Face-focused reverse image search
+
+`src/social_search.py`
+
+Before opening Google Lens, the program detects the face and creates a focused crop.
+
+Example:
+
+```text
+-> detecting face with DeepFace...
+-> face detected: x=200, y=80, w=274, h=274
+-> face crop created:
+   /home/nova/Facechain-verify/tests/sample_data/face_lens_crop.jpg
+```
+
+The original image is not modified.
+
+The crop is then uploaded to Google Lens manually.
+
+```text
+Original image
+      ↓
+DeepFace detects face
+      ↓
+Face crop
+      ↓
+Google Lens
+      ↓
+Social-media candidates
+```
+
+The search code does not contain a hardcoded social-media URL.
+
+Supported social domains include:
+
+- Instagram
+- Facebook
+- X / Twitter
+- LinkedIn
+- Reddit
+- TikTok
+- Threads
+
+---
+
+## Google Lens step
+
+The browser is intentionally visible because Google may require human verification.
+
+When the program displays:
+
+```text
+MANUAL GOOGLE LENS STEP
+```
+
+do the following:
+
+1. Click Google Lens / Search by image.
+2. Select **Upload a file**.
+3. Upload the generated:
+
+```text
+face_lens_crop.jpg
+```
+
+4. Complete Google's verification if requested.
+5. Wait until the Lens results are visible.
+6. Return to the terminal and press **ENTER**.
+
+The program then extracts social-media URLs from the rendered Lens results.
+
+Example:
+
+```text
+-> discovered 24 social-media result(s)
+-> collected 24 candidate web result(s)
+-> found 24 social-media candidate(s)
+-> discovered social match: https://www.instagram.com/...
+```
+
+The exact result will vary because Google Lens results are dynamic.
+
+---
+
+## 3. Blockchain upload
+
+`src/blockchain_verify.py`
+
+The pipeline creates a SHA-256 fingerprint from:
+
+```text
+image bytes + matched social-media URL
+```
+
+Example:
+
+```text
+-> fingerprint:
+9150367715d1d8dba8706c47aa8dad0ef00fe20751563b1f2cbfaa59807a1d51
+```
+
+The default blockchain mode uses the `ProofRegistry` smart contract.
+
+The contract stores:
+
+- fingerprint
+- matched URL
+- timestamp
+- submitting address
+
+---
+
+## 4. Blockchain verification
+
+After the transaction is confirmed, the pipeline retrieves the stored record and compares the stored fingerprint with the locally generated fingerprint.
+
+Example:
+
+```text
+-> transaction confirmed: 0x...
+-> record id from event: 0
+-> on-chain record confirmed
+
+[4/4] Re-verifying against the on-chain record ...
+      -> VERIFIED: True
+```
+
+Final output:
+
+```json
+{
+  "matched_url": "https://www.instagram.com/...",
+  "fingerprint": "...",
+  "tx_hash": "0x...",
+  "record_id": 0,
+  "verified": true
+}
+```
+
+---
+
+# Setup
+
+## Requirements
+
+Recommended environment:
+
+- Python **3.11**
+- Node.js 18+
+- npm
+- Chromium
+- Hardhat
+
+Python 3.11 is recommended because the DeepFace / TensorFlow stack can have compatibility issues on newer Python versions.
+
+---
+
+## 1. Clone the repository
 
 ```bash
-# 1. Python side
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+git clone <YOUR_GITHUB_REPOSITORY_URL>
+cd Facechain-verify
+```
 
-# 2. Node/Hardhat side (skip if you're only using --mode tx)
+---
+
+## 2. Create the Python virtual environment
+
+```bash
+python3.11 -m venv venv
+source venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+If Playwright's browser has not been installed:
+
+```bash
+playwright install chromium
+```
+
+---
+
+## 3. Install the blockchain dependencies
+
+```bash
 cd blockchain
 npm install
 cd ..
+```
 
-# 3. Configure secrets
+---
+
+## 4. Configure `.env`
+
+Create the environment file:
+
+```bash
 cp .env.example .env
-# then edit .env — see below for what each value needs
 ```
 
-### Google Cloud Vision credentials
+For local Hardhat testing, configure the required blockchain values in `.env`.
 
-1. Create a GCP project (free tier is enough) and enable the **Cloud
-   Vision API**.
-2. Create a service account, grant it the "Cloud Vision API User" role,
-   and download its JSON key.
-3. Save it as `gcp-service-account.json` in the project root (already
-   git-ignored) and make sure `.env`'s `GOOGLE_APPLICATION_CREDENTIALS`
-   points at it.
+Example structure:
 
-### Blockchain account
+```env
+PRIVATE_KEY=YOUR_LOCAL_HARDHAT_PRIVATE_KEY
+CONTRACT_ADDRESS=YOUR_DEPLOYED_PROOF_REGISTRY_ADDRESS
+```
 
-Generate a **throwaway** wallet for testing (e.g. `npx hardhat node` prints
-10 pre-funded local accounts with private keys on startup — just copy one
-of those into `.env`'s `PRIVATE_KEY` for local mode). Never reuse a real
-wallet's key here.
+### Security
 
-## Running it
+Never commit:
 
-**Option A — local simulated chain (recommended, fastest):**
+```text
+.env
+PRIVATE_KEY
+service-account JSON files
+real wallet credentials
+```
+
+Use only a throwaway Hardhat account for local testing.
+
+---
+
+# Running the project
+
+## Recommended local blockchain workflow
+
+Because the demo uses a local Hardhat blockchain, use three terminals.
+
+### Terminal 1 — Start Hardhat
 
 ```bash
-# Terminal 1: start a local chain
-cd blockchain && npx hardhat node
-
-# Terminal 2: deploy the contract to it
-cd blockchain && npm run deploy:local
-# copy the printed CONTRACT_ADDRESS into your .env
-
-# Terminal 3: run the pipeline
-python main.py --image tests/sample_data/my_photo.jpg --mode contract --network local
+cd ~/Facechain-verify/blockchain
+npx hardhat node
 ```
 
-**Option B — no contract at all (fastest possible setup):**
+Keep this terminal running.
+
+---
+
+### Terminal 2 — Deploy the contract
 
 ```bash
-cd blockchain && npx hardhat node          # still need a chain to send a tx to
-python main.py --image tests/sample_data/my_photo.jpg --mode tx --network local
+cd ~/Facechain-verify/blockchain
+npx hardhat run scripts/deploy.js --network localhost
 ```
 
-**Option C — real testnet (Sepolia), for a "real blockchain" demo:**
+The deployment prints a new `CONTRACT_ADDRESS`.
+
+Update `.env` in the project root with that address:
+
+```env
+CONTRACT_ADDRESS=<address printed by deployment>
+```
+
+### Important
+
+The local Hardhat chain is reset when `npx hardhat node` is stopped.
+
+Therefore, after restarting the Hardhat node:
+
+1. Start the node.
+2. Deploy `ProofRegistry` again.
+3. Update `CONTRACT_ADDRESS`.
+4. Run the Python pipeline.
+
+Do not restart the Hardhat node while the demo is running.
+
+---
+
+### Terminal 3 — Run the pipeline
 
 ```bash
-cd blockchain && npm run deploy:sepolia   # after filling in SEPOLIA_RPC_URL + PRIVATE_KEY
-python main.py --image tests/sample_data/my_photo.jpg --mode contract --network sepolia
+cd ~/Facechain-verify
+source venv/bin/activate
+
+python main.py \
+  --image tests/sample_data/instagram_test.jpeg \
+  --mode contract \
+  --network local
 ```
 
-Each run prints the detected embedding size, the matched social post URL,
-the fingerprint hash, the transaction hash (and record id, in contract
-mode), and finally `VERIFIED: True/False` after independently re-deriving
-the fingerprint and comparing it against what's stored on-chain.
+---
 
-Run the offline unit tests with:
+# Example successful run
+
+A successful run should contain output similar to:
+
+```text
+[1/4] Detecting face ...
+      -> got a 512-dim face embedding
+
+[2/4] Running genuine reverse image search ...
+      -> detecting face with DeepFace...
+      -> face detected: x=200, y=80, w=274, h=274
+      -> face crop created: .../face_lens_crop.jpg
+
+      -> discovered 24 social-media result(s)
+      -> discovered social match: https://www.instagram.com/...
+
+[3/4] Hashing + uploading to blockchain ...
+      -> fingerprint: ...
+      -> transaction confirmed: 0x...
+      -> record id from event: 0
+      -> on-chain record confirmed
+
+[4/4] Re-verifying against the on-chain record ...
+      -> VERIFIED: True
+```
+
+The exact Lens result, number of candidates, fingerprint, transaction hash, and record ID can change between runs.
+
+---
+
+# Command-line options
+
+```bash
+python main.py --image <IMAGE_PATH>
+```
+
+### Contract mode
+
+Default and recommended for the Task 3 demonstration:
+
+```bash
+python main.py \
+  --image tests/sample_data/instagram_test.jpeg \
+  --mode contract \
+  --network local
+```
+
+### Transaction-data mode
+
+An alternative blockchain demonstration that does not use `ProofRegistry`:
+
+```bash
+python main.py \
+  --image tests/sample_data/instagram_test.jpeg \
+  --mode tx \
+  --network local
+```
+
+The contract mode is preferred because it demonstrates a queryable blockchain record and explicit re-verification.
+
+---
+
+# Smart contract
+
+`blockchain/contracts/ProofRegistry.sol`
+
+The contract contains:
+
+```solidity
+struct Record {
+    bytes32 fingerprint;
+    string matchedUrl;
+    uint256 timestamp;
+    address submitter;
+}
+```
+
+The main functions are:
+
+```text
+submitProof()
+getRecord()
+verify()
+totalRecords()
+```
+
+`submitProof()` creates a record and emits a `ProofSubmitted` event.
+
+`getRecord()` retrieves the stored record.
+
+`verify()` compares a supplied fingerprint with the stored fingerprint.
+
+---
+
+# Testing
+
+Run the available tests with:
 
 ```bash
 pytest tests/
 ```
 
-## Screen recording checklist
+---
 
-For the submission recording, show, in one continuous take:
-1. The input photo.
-2. The console output of stage 1–2 (face detected → matched URL found) —
-   pause on the matched URL so it's clearly a real, live post.
-3. The upload step's printed tx hash, and that tx/record looked up on a
-   block explorer (Etherscan for Sepolia) or via `getRecord()` for local.
-4. The final `VERIFIED: True` line.
+# Screen-recording checklist
 
-## Ethics & limitations (known limitations, as required by the task)
+For the Hacker House Goa Task 3 demonstration, show the complete flow in one continuous recording.
 
-- **Consent boundary.** The search step is a genuine, general-purpose
-  reverse-image search — it isn't hardcoded to any one result — but it's
-  designed and tested only against the operator's own face/posts or a
-  consenting volunteer's. Pointed at an arbitrary stranger's photo, this
-  same technique is the basis of controversial "find this person" face-search
-  services that have drawn significant regulatory and legal scrutiny for
-  enabling stalking/harassment. This repo does not include any code to
-  scale that up (no batch processing of unknown faces, no face database).
-- **Search coverage is limited.** Google's Web Detection only surfaces
-  content it has crawled and indexed; a private account, a very recent
-  post, or a platform that blocks indexing (e.g. many Instagram posts)
-  may simply not show up, even for a genuine match.
-- **Face-matching accuracy.** DeepFace/Facenet embeddings can produce
-  false positives/negatives, especially across very different lighting,
-  age, or image quality — `is_same_person()` is provided as an optional
-  extra check but isn't relied on to gate the pipeline by default.
-- **Not legal/forensic-grade proof.** Writing a hash on-chain proves the
-  hash existed at that block time and hasn't changed since — it does
-  **not** prove who is in the photo, that the matched post is genuinely
-  the same person, or anything about chain-of-custody before the upload.
-- **Testnet/local chain only in this default config** — a mainnet
-  deployment would need real funds and additional security review
-  (access control on `submitProof`, rate limiting, etc.) before any
-  production use.
+### 1. Face input
 
-## Ideas to extend
+Show the input test image.
 
-- Call `is_same_person()` on a downloaded thumbnail of the matched image
-  vs. the input embedding, and only proceed if it actually matches — turns
-  "a page with a visually similar image" into "a page with *this* face".
-- Add IPFS pinning of the matched image/metadata and store the IPFS CID
-  on-chain instead of (or alongside) the raw hash.
-- Swap Google Vision for TinEye or SerpApi's reverse-image endpoint to
-  compare index coverage.
+### 2. Face detection
+
+Show:
+
+```text
+[1/4] Detecting face ...
+-> got a 512-dim face embedding
+```
+
+### 3. Face crop
+
+Show:
+
+```text
+-> face detected: ...
+-> face crop created: .../face_lens_crop.jpg
+```
+
+### 4. Genuine reverse-image search
+
+Show the Google Lens upload and the resulting search page.
+
+The search must be performed live rather than using a hardcoded URL.
+
+### 5. Social-media match
+
+Show that Lens produced social-media results and that the program discovered one dynamically.
+
+### 6. Blockchain upload
+
+Show:
+
+```text
+-> fingerprint: ...
+-> transaction confirmed: 0x...
+-> on-chain record confirmed
+```
+
+### 7. Final verification
+
+End with:
+
+```text
+-> VERIFIED: True
+```
+
+This demonstrates:
+
+```text
+Face scan
+   ↓
+Reverse image search
+   ↓
+Social post discovered
+   ↓
+Blockchain upload
+   ↓
+Blockchain re-verification
+```
+
+---
+
+# Known limitations
+
+### Google Lens results are dynamic
+
+Search results can differ between runs. A social-media result may appear in one search and not another.
+
+### Search indexing
+
+Private, deleted, very recent, or poorly indexed posts may not appear in reverse-image results.
+
+### Manual browser step
+
+Google Lens may require human interaction or verification. The project intentionally does not attempt to bypass these checks.
+
+### Face recognition accuracy
+
+DeepFace embeddings can produce false positives or false negatives depending on image quality, lighting, pose, and other factors.
+
+### Blockchain scope
+
+The default setup uses a local Hardhat blockchain for demonstration. It is not a production blockchain deployment.
+
+### Hash verification is not identity proof
+
+A blockchain fingerprint proves that a particular fingerprint was recorded on-chain. It does **not** prove the identity of the person in an image or establish forensic chain of custody.
+
+---
+
+# Ethics
+
+This project is intended as a technical demonstration of:
+
+- face detection
+- reverse-image search
+- social-media result discovery
+- cryptographic fingerprinting
+- blockchain verification
+
+It should only be tested with images belonging to the operator or consenting participants.
+
+The repository does not provide a database of unknown people, batch processing of arbitrary faces, or a mechanism for bypassing platform security or verification systems.
+
+---
+
+# Future improvements
+
+Possible extensions include:
+
+- Compare the detected face embedding with a thumbnail from the discovered result before accepting it.
+- Add multiple-result ranking instead of selecting the first social result.
+- Store structured metadata alongside the fingerprint.
+- Store an IPFS CID alongside the on-chain fingerprint.
+- Add a small dashboard for visualizing blockchain records.
+- Add additional reverse-image providers for broader search coverage.
+- Add automated tests for URL extraction and fingerprint verification.
+
+---
+
+# Task 3 requirement mapping
+
+| Task requirement | Implementation |
+|---|---|
+| Face identification | DeepFace / FaceNet512 |
+| Detect and encode face | `src/face_module.py` |
+| Genuine web/social search | Google Lens via Playwright |
+| No hardcoded result | Social URL is extracted from live Lens results |
+| Social-media matching | Instagram, Facebook, X/Twitter, LinkedIn, Reddit, TikTok, Threads |
+| Blockchain upload | `ProofRegistry.sol` |
+| Fingerprint | SHA-256 |
+| Blockchain verification | `getRecord()` + fingerprint comparison |
+| Demonstration | Screen recording of complete pipeline |
+| Repository | GitHub + this README |
+
+---
+
+## Final result
+
+The project demonstrates the required end-to-end workflow:
+
+```text
+Face Scan
+    ↓
+DeepFace Face Detection + Embedding
+    ↓
+Face-Focused Crop
+    ↓
+Google Lens Reverse Image Search
+    ↓
+Social-Media Result Discovered
+    ↓
+SHA-256 Fingerprint
+    ↓
+ProofRegistry Blockchain Record
+    ↓
+On-Chain Re-Verification
+    ↓
+VERIFIED: True
+```
+
